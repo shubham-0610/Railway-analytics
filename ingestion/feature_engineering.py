@@ -1,24 +1,27 @@
-from database.db_connection import connect_postgres
+import os
 import traceback
+
 from dotenv import load_dotenv
 
-import os
+from database.db_connection import connect_postgres
+
 load_dotenv()
 
 
-def transform_for_dashboard():
-    host=os.getenv("host")
-    dbname=os.getenv("dbname")
-    user=os.getenv("user")
-    password=os.getenv("password")
-    port=5432
+def transform_for_dashboard(recreate=False):
+    host = os.getenv("host")
+    dbname = os.getenv("dbname")
+    user = os.getenv("user")
+    password = os.getenv("password")
+    port = 5432
     try:
-        # Connect to DB
-        conn = connect_postgres(host,dbname,user,password,port)
+        conn = connect_postgres(host, dbname, user, password, port)
         cursor = conn.cursor()
         print("✅ Connected to PostgreSQL")
 
-        # Step 1: Create dashboard table
+        if recreate:
+            cursor.execute("DROP TABLE IF EXISTS train_delays_dashboard;")
+
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS train_delays_dashboard (
             train_id VARCHAR(50),
@@ -43,7 +46,6 @@ def transform_for_dashboard():
         conn.commit()
         print("📌 Dashboard table created successfully")
 
-        # Step 2: Insert transformed data
         cursor.execute("""
         INSERT INTO train_delays_dashboard (
             train_id, train_name, train_no, source, destination, date,
