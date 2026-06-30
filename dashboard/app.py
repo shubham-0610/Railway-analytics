@@ -11,8 +11,31 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from database.db_connection import connect_postgres
+import database.db_connection as db_connection
 from ingestion.pipeline import initialize_dashboard_data, refresh_dashboard_with_sample
+
+
+def _read_query_dataframe(conn, query, params=None):
+    if hasattr(conn, "execute") and hasattr(conn, "fetchdf"):
+        if params is None:
+            return conn.execute(query).df()
+        return conn.execute(query, params).df()
+
+    if hasattr(conn, "cursor"):
+        cursor = conn.cursor()
+        if params is None:
+            cursor.execute(query)
+        else:
+            cursor.execute(query, params)
+        if cursor.description is None:
+            cursor.close()
+            return pd.DataFrame()
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
+        cursor.close()
+        return pd.DataFrame(rows, columns=columns)
+
+    return pd.read_sql(query, conn, params=params)
 
 load_dotenv(dotenv_path=os.path.join(ROOT_DIR, ".env"))
 
@@ -24,20 +47,20 @@ def load_dashboard_data():
     password = os.getenv("password")
     port = 5432
 
-    conn = connect_postgres(host, dbname, user, password, port)
+    conn = db_connection.connect_postgres(host, dbname, user, password, port)
     if conn is None:
-        st.error("Unable to connect to PostgreSQL. Please verify your database settings.")
+        st.error("Unable to connect to the local DuckDB database. Please verify your database settings.")
         st.stop()
 
     query = "SELECT train_name, date, sc_arr_time, act_arr_time FROM train_delays_dashboard;"
-    df = pd.read_sql(query, conn)
+    df = _read_query_dataframe(conn, query)
 
     if df.empty:
         try:
             conn.close()
             initialize_dashboard_data()
-            conn = connect_postgres(host, dbname, user, password, port)
-            df = pd.read_sql(query, conn)
+            conn = db_connection.connect_postgres(host, dbname, user, password, port)
+            df = _read_query_dataframe(conn, query)
         except Exception as exc:
             st.warning(f"Data initialization failed: {exc}")
 
