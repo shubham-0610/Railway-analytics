@@ -1,55 +1,64 @@
-import psycopg2
-from psycopg2 import OperationalError
+import os
+import subprocess
+import sys
+
+import pandas as pd
 from dotenv import load_dotenv
 
-import os
 load_dotenv()
 
-def connect_postgres(host="localhost", dbname="demo", user="demo", password="demo", port=5432):
-    """
-    Connects to a local PostgreSQL database and tests the connection.
-    
-    Parameters:
-        host (str): Database host (default: localhost)
-        dbname (str): Database name
-        user (str): Username
-        password (str): Password
-        port (int): Port number (default: 5432)
-    
-    Returns:
-        connection object if successful, None otherwise
-    """
+
+def _load_duckdb():
     try:
-        conn = psycopg2.connect(
-            host=host,
-            database=dbname,
-            user=user,
-            password=password,
-            port=port
-        )
-        print("✅ Connection to PostgreSQL successful!")
+        import duckdb as duckdb_module
+        return duckdb_module
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "duckdb"])
+        import duckdb as duckdb_module
+        return duckdb_module
+
+
+def connect_postgres(host="localhost", dbname="demo", user="demo", password="demo", port=5432):
+    """Create a DuckDB connection for local analytics workflows."""
+    try:
+        duckdb = _load_duckdb()
+        db_path = os.getenv("duckdb_path", "data/railway.duckdb")
+        conn = duckdb.connect(db_path)
+        print("✅ Connection to DuckDB successful!")
         return conn
-    except OperationalError as e:
+    except Exception as e:
         print("❌ Connection failed!")
         print(e)
         return None
 
 
-#Example usage:
-# if __name__ == "__main__":
-#     connection = connect_postgres(
-#         host=os.getenv("host"),
-#         dbname=os.getenv("dbname"),   # replace with your DB name
-#         user=os.getenv("user"),       # replace with your pgAdmin username
-#         password=os.getenv("password"),  # replace with your pgAdmin password
-#         port=5432
-#     )
-    
-#     if connection:
-#         # Test query
-#         cursor = connection.cursor()
-#         cursor.execute("SELECT version();")
-#         record = cursor.fetchone()
-#         print("PostgreSQL version:", record)
-#         cursor.close()
-#         connection.close()
+def get_duckdb_connection():
+    """Return a DuckDB connection using the configured local database path."""
+    return connect_postgres()
+
+
+def query_dataframe(conn, query, params=None):
+    """Run a query and return a pandas DataFrame for either DuckDB or psycopg2-style connections."""
+    if conn is None:
+        raise ValueError("Connection is None")
+
+    if hasattr(conn, "execute") and hasattr(conn, "fetchdf"):
+        if params is None:
+            return conn.execute(query).df()
+        return conn.execute(query, params).df()
+
+    if hasattr(conn, "cursor"):
+        cursor = conn.cursor()
+        if params is None:
+            cursor.execute(query)
+        else:
+            cursor.execute(query, params)
+        if cursor.description is None:
+            cursor.close()
+            return pd.DataFrame()
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
+        cursor.close()
+        return pd.DataFrame(rows, columns=columns)
+
+    return pd.read_sql(query, conn, params=params)

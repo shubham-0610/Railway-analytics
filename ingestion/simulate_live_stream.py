@@ -3,7 +3,7 @@ import os
 
 import pandas as pd
 
-from database.db_connection import connect_postgres
+import database.db_connection as db_connection
 
 
 def build_simulated_delay_payload(train_name, delay_minutes=15, latest_date=None):
@@ -25,11 +25,10 @@ def build_simulated_delay_payload(train_name, delay_minutes=15, latest_date=None
 
 def ensure_dashboard_table(conn):
     """Create the dashboard table if it does not already exist."""
-    cursor = conn.cursor()
-    cursor.execute(
+    conn.execute(
         """
         CREATE TABLE IF NOT EXISTS train_delays_dashboard (
-            train_name VARCHAR(100),
+            train_name VARCHAR,
             date DATE,
             sc_arr_time TIME,
             act_arr_time TIME
@@ -37,14 +36,13 @@ def ensure_dashboard_table(conn):
         """
     )
     conn.commit()
-    cursor.close()
 
 
 def get_latest_train_date(conn, train_name):
     """Return the latest date for the selected train if one exists."""
-    query = "SELECT MAX(date) AS latest_date FROM train_delays_dashboard WHERE train_name = %s;"
-    latest_df = pd.read_sql(query, conn, params=(train_name,))
-    latest_value = latest_df.iloc[0][0]
+    query = "SELECT MAX(date) AS latest_date FROM train_delays_dashboard WHERE train_name = ?;"
+    latest_df = db_connection.query_dataframe(conn, query, [train_name])
+    latest_value = latest_df.iloc[0, 0]
 
     if pd.isna(latest_value):
         return None
@@ -60,10 +58,10 @@ def insert_simulated_delay(train_name, delay_minutes=15, conn=None):
         user = os.getenv("user")
         password = os.getenv("password")
         port = 5432
-        conn = connect_postgres(host, dbname, user, password, port)
+        conn = db_connection.connect_postgres(host, dbname, user, password, port)
 
     if conn is None:
-        raise ConnectionError("Unable to connect to PostgreSQL.")
+        raise ConnectionError("Unable to connect to the local DuckDB database.")
 
     ensure_dashboard_table(conn)
 
@@ -74,21 +72,19 @@ def insert_simulated_delay(train_name, delay_minutes=15, conn=None):
         latest_date=latest_date,
     )
 
-    cursor = conn.cursor()
-    cursor.execute(
+    conn.execute(
         """
         INSERT INTO train_delays_dashboard (train_name, date, sc_arr_time, act_arr_time)
-        VALUES (%s, %s, %s, %s)
+        VALUES (?, ?, ?, ?)
         """,
-        (
+        [
             payload["train_name"],
             payload["date"],
             payload["sc_arr_time"],
             payload["act_arr_time"],
-        ),
+        ],
     )
     conn.commit()
-    cursor.close()
     conn.close()
 
     return payload
